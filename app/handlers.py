@@ -7,11 +7,21 @@ from storage import user_exercises
 
 router = Router()
 
+
 async def start_command(message: types.Message):
     await message.answer(
-        "👋 Привет! Отправь задание в формате:\n<code>Intermediate, Past Simple, multiple-choice</code>",
+        "👋 Привет! Я твой персональный репетитор английского.\n\n"
+        "Чтобы получить упражнение, отправь запрос в формате:\n"
+        "<code>Уровень, Тема, Тип задания</code>\n\n"
+        "📌 Например:\n"
+        "<code>Intermediate, Past Simple, multiple-choice</code>\n\n"
+        "🔎 Расшифровка:\n"
+        "<b>Уровень:</b> Beginner, Intermediate, Advanced\n"
+        "<b>Тема:</b> Например, Past Simple, Present Continuous, Vocabulary\n"
+        "<b>Тип задания:</b> multiple-choice (выбор ответа из вариантов)",
         parse_mode='HTML'
     )
+
 
 async def generate_exercise_handler(message: types.Message):
     user_id = message.from_user.id
@@ -19,7 +29,9 @@ async def generate_exercise_handler(message: types.Message):
         level, topic, ex_type = map(str.strip, message.text.split(','))
     except:
         await message.answer(
-            "❌ Неверный формат ввода. Используй: <code>Intermediate, Past Simple, multiple-choice</code>",
+            "❌ Неверный формат ввода.\n\n"
+            "Используй формат:\n"
+            "<code>Intermediate, Past Simple, multiple-choice</code>",
             parse_mode='HTML'
         )
         return
@@ -35,7 +47,6 @@ async def generate_exercise_handler(message: types.Message):
     cleaned_result = re.split(r'Answers:', cleaned_result, flags=re.IGNORECASE)[0].strip()
     cleaned_result = re.split(r'Explanations:', cleaned_result, flags=re.IGNORECASE)[0].strip()
 
-
     user_exercises[user_id] = cleaned_result
 
     await message.answer(cleaned_result, parse_mode='HTML')
@@ -44,12 +55,23 @@ async def generate_exercise_handler(message: types.Message):
         parse_mode='HTML'
     )
 
+
+async def incorrect_exercise_format_handler(message: types.Message):
+    await message.answer(
+        "❌ Некорректный запрос.\n\n"
+        "Чтобы получить упражнение, введи запрос в формате:\n"
+        "<code>Intermediate, Past Simple, multiple-choice</code>",
+        parse_mode='HTML'
+    )
+
+
 async def check_answers_handler(message: types.Message):
     user_id = message.from_user.id
 
     if user_id not in user_exercises:
         await message.answer(
-            "❌ Сначала получи задание! Отправь: <code>Intermediate, Past Simple, multiple-choice</code>",
+            "❌ Сначала получи задание!\nОтправь:\n"
+            "<code>Intermediate, Past Simple, multiple-choice</code>",
             parse_mode='HTML'
         )
         return
@@ -69,8 +91,38 @@ async def check_answers_handler(message: types.Message):
     del user_exercises[user_id]
 
 
+async def incorrect_answers_format_handler(message: types.Message):
+    await message.answer(
+        "❌ Неверный формат ответов.\n\n"
+        "Отправь ответы в формате:\n"
+        "<code>1c, 2b, 3a</code>",
+        parse_mode='HTML'
+    )
+
+
 def register_handlers(dp: Dispatcher):
     router.message.register(start_command, Command("start"))
-    router.message.register(generate_exercise_handler, F.text.regexp(r'^[A-Za-z]+,\s*[A-Za-z ]+,\s*[A-Za-z-]+$'))
-    router.message.register(check_answers_handler, F.text.regexp(r'^(\d[a-d],?\s*)+$'))
+
+    # Правильный формат получения упражнения
+    router.message.register(
+        generate_exercise_handler,
+        F.text.regexp(r'^[A-Za-z]+,\s*[A-Za-z ]+,\s*[A-Za-z-]+$')
+    )
+
+    # Правильный формат ответов
+    router.message.register(
+        check_answers_handler,
+        F.text.regexp(r'^(\d[a-d],\s*){2}\d[a-d]$')
+    )
+
+    # Неправильный формат ответов (при активном задании)
+    router.message.register(
+        incorrect_answers_format_handler,
+        F.text.regexp(r'^\d.*'),
+        lambda message: message.from_user.id in user_exercises
+    )
+
+    # Неправильный формат ввода задания (в остальных случаях)
+    router.message.register(incorrect_exercise_format_handler)
+
     dp.include_router(router)
