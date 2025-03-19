@@ -1,47 +1,68 @@
 import re
 from aiogram import types, Dispatcher, Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BotCommand
 from llm_api import generate_exercise
 from prompts import exercise_prompt, check_answers_prompt
 
 router = Router()
 
 class ExerciseState(StatesGroup):
-    waiting_for_exercise = State()
+    choosing_level = State()
+    entering_topic = State()
     waiting_for_answers = State()
 
+async def set_commands(bot):
+    commands = [
+        BotCommand(command="start", description="🚀 Перезапустить бота"),
+        BotCommand(command="level", description="📚 Сменить уровень"),
+    ]
+    await bot.set_my_commands(commands)
+
 async def start_command(message: types.Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Beginner")],
+            [KeyboardButton(text="Intermediate")],
+            [KeyboardButton(text="Advanced")]
+        ],
+        resize_keyboard=True
+    )
     await message.answer(
         "👋 Привет! Я твой персональный репетитор английского.\n\n"
-        "Чтобы получить упражнение, отправь запрос в формате:\n"
-        "<code>Уровень, Тема, Тип задания</code>\n\n"
-        "📌 Например:\n"
-        "<code>Intermediate, Past Simple, multiple-choice</code>\n\n"
-        "🔎 Расшифровка:\n"
-        "<b>Уровень:</b> Beginner, Intermediate, Advanced\n"
-        "<b>Тема:</b> Например, Past Simple, Present Continuous, Vocabulary\n"
-        "<b>Тип задания:</b> multiple-choice (выбор ответа из вариантов)",
-        parse_mode='HTML'
+        "Выбери свой уровень английского:",
+        reply_markup=kb
     )
-    await state.set_state(ExerciseState.waiting_for_exercise)
+    await state.set_state(ExerciseState.choosing_level)
+
+async def choose_level(message: types.Message, state: FSMContext):
+    level = message.text.strip()
+
+    if level not in ["Beginner", "Intermediate", "Advanced"]:
+        await message.answer("❌ Пожалуйста, выбери уровень с помощью кнопок.")
+        return
+
+    await state.update_data(level=level)
+
+    await message.answer(
+        f"✅ Ты выбрал уровень: <b>{level}</b>\n\n"
+        "Теперь введи тему упражнения.\n\n"
+        "📌 Например:\n<code>Past Simple</code>, <code>Present Continuous</code>, <code>Vocabulary</code>",
+        parse_mode='HTML',
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(ExerciseState.entering_topic)
 
 async def generate_exercise_handler(message: types.Message, state: FSMContext):
-    try:
-        level, topic, ex_type = map(str.strip, message.text.split(','))
-    except:
-        await message.answer(
-            "❌ Неверный формат ввода.\n\n"
-            "Используй формат:\n"
-            "<code>Intermediate, Past Simple, multiple-choice</code>",
-            parse_mode='HTML'
-        )
-        return
+    topic = message.text.strip()
+    user_data = await state.get_data()
+    level = user_data['level']
 
     wait_msg = await message.answer("⏳ Генерирую задание...", parse_mode='HTML')
 
-    prompt = exercise_prompt(level, topic, ex_type)
+    prompt = exercise_prompt(level, topic, "multiple-choice")
     llm_result = generate_exercise(prompt)
 
     await wait_msg.delete()
@@ -60,14 +81,6 @@ async def generate_exercise_handler(message: types.Message, state: FSMContext):
 
     await state.set_state(ExerciseState.waiting_for_answers)
 
-async def incorrect_format_exercise(message: types.Message):
-    await message.answer(
-        "❌ Некорректный запрос.\n\n"
-        "Чтобы получить упражнение, введи запрос в формате:\n"
-        "<code>Intermediate, Past Simple, multiple-choice</code>",
-        parse_mode='HTML'
-    )
-
 async def check_answers_handler(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
     exercise_text = user_data.get('exercise')
@@ -82,14 +95,12 @@ async def check_answers_handler(message: types.Message, state: FSMContext):
 
     await message.answer(result, parse_mode='HTML')
 
-    # Циклически возвращаем в состояние ожидания следующего упражнения
     await message.answer(
-        "🔄 Хочешь ещё упражнение?\n\n"
-        "Отправь запрос в формате:\n"
-        "<code>Intermediate, Past Simple, multiple-choice</code>",
+        "📌 Введи следующую тему для упражнения:\n"
+        "Например: <code>Past Simple</code>, <code>Vocabulary</code>",
         parse_mode='HTML'
     )
-    await state.set_state(ExerciseState.waiting_for_exercise)
+    await state.set_state(ExerciseState.entering_topic)
 
 async def incorrect_answers_format(message: types.Message):
     await message.answer(
@@ -99,30 +110,50 @@ async def incorrect_answers_format(message: types.Message):
         parse_mode='HTML'
     )
 
-async def no_new_task_allowed(message: types.Message):
+async def incorrect_topic_format(message: types.Message):
     await message.answer(
-        "❌ Сначала закончи текущее упражнение!\n\n"
-        "Отправь ответы в формате:\n"
-        "<code>1c, 2b, 3a</code>",
+        "❌ Некорректная тема.\n\n"
+        "Введи тему упражнения, например:\n<code>Past Simple</code>, <code>Vocabulary</code>",
         parse_mode='HTML'
     )
 
-def register_handlers(dp: Dispatcher):
-    router.message.register(start_command, Command("start"))
+async def level_command(message: types.Message, state: FSMContext):
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Beginner")],
+            [KeyboardButton(text="Intermediate")],
+            [KeyboardButton(text="Advanced")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("📚 Выбери новый уровень:", reply_markup=kb)
+    await state.set_state(ExerciseState.choosing_level)
 
-    # Генерация упражнения
+async def not_allowed_input(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == ExerciseState.waiting_for_answers.state:
+        await incorrect_answers_format(message)
+    elif current_state == ExerciseState.entering_topic.state:
+        await incorrect_topic_format(message)
+    elif current_state == ExerciseState.choosing_level.state:
+        await message.answer("❌ Выбери уровень с помощью кнопок.")
+
+def register_handlers(dp: Dispatcher):
+    router.message.register(start_command, CommandStart())
+    router.message.register(level_command, Command("level"))
+
+    router.message.register(
+        choose_level,
+        ExerciseState.choosing_level,
+        F.text.in_(["Beginner", "Intermediate", "Advanced"])
+    )
+
     router.message.register(
         generate_exercise_handler,
-        ExerciseState.waiting_for_exercise,
-        F.text.regexp(r'^[A-Za-z]+,\s*[A-Za-z ]+,\s*[A-Za-z-]+$')
+        ExerciseState.entering_topic,
+        F.text
     )
 
-    router.message.register(
-        incorrect_format_exercise,
-        ExerciseState.waiting_for_exercise
-    )
-
-    # Проверка ответов
     router.message.register(
         check_answers_handler,
         ExerciseState.waiting_for_answers,
@@ -130,16 +161,18 @@ def register_handlers(dp: Dispatcher):
     )
 
     router.message.register(
-        incorrect_answers_format,
-        ExerciseState.waiting_for_answers,
-        F.text
+        not_allowed_input,
+        ExerciseState.waiting_for_answers
     )
 
-    # Запрет нового задания до окончания текущего
     router.message.register(
-        no_new_task_allowed,
-        ExerciseState.waiting_for_answers,
-        F.text.regexp(r'^[A-Za-z]+,\s*[A-Za-z ]+,\s*[A-Za-z-]+$')
+        incorrect_topic_format,
+        ExerciseState.entering_topic
+    )
+
+    router.message.register(
+        choose_level,
+        ExerciseState.choosing_level
     )
 
     dp.include_router(router)
