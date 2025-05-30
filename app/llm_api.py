@@ -15,7 +15,7 @@ def generate_exercise(prompt):
             "Content-Type": "application/json"
         }
         data = {
-            "model": "llama-3.3-70b-specdec",  # ✅ Заменяем модель на Mixtral-8x7b
+            "model": "llama-3.3-70b-specdec",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.7,
             "max_tokens": 500
